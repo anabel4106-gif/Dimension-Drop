@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dimension Drop - Standalone XR Tetris</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
         body { margin: 0; overflow: hidden; background-color: #0a0a0a; color: white; border: none; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 10; }
@@ -13,6 +15,7 @@
     </style>
 </head>
 <body>
+    <video id="webcam" class="hidden" autoplay playsinline></video>
     <div id="ui-root" class="ui-overlay">
         <!-- Start Overlay -->
         <div id="start-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-black/95 z-[60] p-12 overflow-hidden pointer-auto">
@@ -32,6 +35,9 @@
                 </p>
                 <button id="start-button" class="group relative px-16 py-6 bg-white text-black font-black uppercase tracking-[0.2em] text-xs hover:bg-cyan-400 transition-all duration-500 hover:scale-110 active:scale-95 shadow-[0_0_50px_rgba(255,255,255,0.1)]">
                     Initialize Session
+                </button>
+                <button id="desktop-hands-button" class="mt-4 px-8 py-3 bg-black/50 border border-white/20 text-white/50 text-[9px] uppercase tracking-[0.3em] hover:text-cyan-400 hover:border-cyan-400/50 transition-all pointer-auto">
+                    Enable Desktop Hand Tracking (Beta)
                 </button>
             </div>
             <div class="absolute bottom-12 flex flex-col items-center opacity-30">
@@ -101,10 +107,13 @@
         let score = 0, level = 1, gameOver = false, gameStarted = false, lastFallTime = 0;
         let grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
         let activeBlock = null, nextBlockType = getRandomShape(), isGrabbed = false, isPinching = false, grabbingController = null;
+        let desktopHandActive = false, desktopHandData = null;
 
         const scorePanel = document.getElementById('score-panel'), scoreVal = document.getElementById('score-val');
         const levelVal = document.getElementById('level-val'), startOverlay = document.getElementById('start-overlay');
         const gameOverOverlay = document.getElementById('game-over-overlay'), instructions = document.getElementById('instructions');
+        const webcam = document.getElementById('webcam');
+        const desktopHandsBtn = document.getElementById('desktop-hands-button');
 
         // --- Audio ---
         let ac;
@@ -244,6 +253,50 @@
             gameStarted=true; startOverlay.classList.add('hidden'); scorePanel.classList.remove('hidden'); instructions.classList.remove('hidden'); spawn(); playPing();
         });
 
+        // --- Desktop Hand Tracking Logic ---
+        async function initDesktopHands() {
+            if (typeof window.Hands === 'undefined') {
+                console.error("MediaPipe Hands not loaded.");
+                return;
+            }
+            desktopHandsBtn.innerText = "Initializing Camera...";
+            const hands = new window.Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            hands.onResults((results) => {
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    desktopHandData = results.multiHandLandmarks[0];
+                } else {
+                    desktopHandData = null;
+                }
+            });
+
+            const cameraPipe = new window.Camera(webcam, {
+                onFrame: async () => {
+                    await hands.send({image: webcam});
+                },
+                width: 640,
+                height: 480
+            });
+            
+            try {
+                await cameraPipe.start();
+                desktopHandActive = true;
+                desktopHandsBtn.innerText = "Desktop Hands Active";
+                desktopHandsBtn.classList.add('text-cyan-400', 'border-cyan-400');
+            } catch (err) {
+                console.error("Webcam access denied", err);
+                desktopHandsBtn.innerText = "Camera Access Denied";
+            }
+        }
+        desktopHandsBtn.addEventListener('click', initDesktopHands);
+
         // --- Animation Loop ---
         let frameLastFallTime = performance.now();
         renderer.setAnimationLoop((t) => {
@@ -312,7 +365,44 @@
                 const l = gridGroup.worldToLocal(target), nx=Math.round(l.x/BLOCK_SIZE+COLS/2-activeBlock.matrix[0].length/2), ny=Math.round(l.y/BLOCK_SIZE+activeBlock.matrix.length/2-1);
                 if(!collides(nx,ny,activeBlock.matrix)) { activeBlock.x=nx; activeBlock.y=ny; updateActive(); }
             }
-            gridGroup.position.y = 0.8 + Math.sin(t*0.001)*0.01; nextGroup.rotation.y+=0.01; renderer.render(scene, camera);
+            gridGroup.position.y = 0.8 + Math.sin(t*0.001)*0.01; nextGroup.rotation.y+=0.01; 
+
+            // Process Desktop Hand Tracking
+            if (desktopHandActive && desktopHandData && activeBlock) {
+                const thumb = desktopHandData[4];
+                const index = desktopHandData[8];
+                const dx = thumb.x - index.x;
+                const dy = thumb.y - index.y;
+                const dz = thumb.z - index.z;
+                const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                const pinching = distance < 0.05;
+
+                // Map 2D normalized (0-1) to 3D grid
+                // Invert X for mirroring
+                const nx_normalized = 1 - index.x; 
+                const ny_normalized = 1 - index.y;
+
+                // Grid ranges: X [-COLS/2 * BLOCK_SIZE, COLS/2 * BLOCK_SIZE], Y [0, ROWS * BLOCK_SIZE]
+                const gridX = (nx_normalized - 0.5) * (COLS * BLOCK_SIZE * 1.5); // 1.5 factor for reach
+                const gridY = ny_normalized * (ROWS * BLOCK_SIZE * 1.2);
+
+                if (pinching) {
+                    isGrabbed = true;
+                    const nx = Math.round(gridX/BLOCK_SIZE+COLS/2-activeBlock.matrix[0].length/2);
+                    const ny = Math.round(gridY/BLOCK_SIZE+activeBlock.matrix.length/2-1);
+                    if(!collides(nx,ny,activeBlock.matrix)) { 
+                        activeBlock.x=nx; 
+                        activeBlock.y=ny; 
+                        updateActive(); 
+                    }
+                } else {
+                    if (isGrabbed && !grabbingController) {
+                        isGrabbed = false;
+                    }
+                }
+            }
+
+            renderer.render(scene, camera);
         });
         window.addEventListener('resize', () => { camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
     </script>
