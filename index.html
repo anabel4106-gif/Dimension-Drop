@@ -110,6 +110,9 @@
         let grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
         let activeBlock = null, nextBlockType = getRandomShape(), isGrabbed = false, isPinching = false, grabbingController = null;
         let desktopHandActive = false, desktopHandData = null;
+        
+        let smoothedPinch = 0.1; 
+        const desktopPointerPos = new THREE.Vector3();
 
         const scorePanel = document.getElementById('score-panel'), scoreVal = document.getElementById('score-val');
         const levelVal = document.getElementById('level-val'), startOverlay = document.getElementById('start-overlay');
@@ -384,26 +387,33 @@
                 const index = desktopHandData[8];
                 const dx = thumb.x - index.x;
                 const dy = thumb.y - index.y;
-                const distance = Math.sqrt(dx*dx + dy*dy); // 2D distance for pinch is often more reliable
-                const pinching = distance < 0.08;
+                const rawDist = Math.sqrt(dx*dx + dy*dy);
+                
+                // Low-pass filter for pinch distance
+                smoothedPinch = smoothedPinch * 0.7 + rawDist * 0.3;
+                
+                // Pinch hysteresis (harder to start, easier to hold)
+                const pinchThreshold = isPinching ? 0.12 : 0.08;
+                const pinching = smoothedPinch < pinchThreshold;
 
-                // Better mapping & Ergonomics
+                // Coordinate mapping with deadzone and scaling
                 const nx_normalized = 1 - index.x; 
                 const ny_normalized = 1 - index.y;
 
-                // Target position in world space - Increased sensitivity (2.2) and adjusted Y center (0.6)
-                // This makes it so users don't have to reach as high/far to move blocks.
-                const targetX = (nx_normalized - 0.5) * 2.2;
-                const targetY = 0.6 + (ny_normalized - 0.5) * 2.5;
+                // Wider interaction area for better ergonomics (2.8x and 3.0y)
+                const targetX = (nx_normalized - 0.5) * 2.8;
+                const targetY = 0.8 + (ny_normalized - 0.5) * 3.0;
                 const targetZ = -0.5;
 
-                // Update Visual Pointer with faster lerp (0.3) for snappier response
+                // Update Visual Pointer with smooth interpolation
                 desktopPointer.visible = true;
-                desktopPointer.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.3);
+                desktopPointer.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.15);
                 desktopPointer.material.color.set(pinching ? 0x00ff00 : 0xff00ff);
+                desktopPointer.scale.setScalar(pinching ? 0.7 : 1.0);
 
                 if (pinching) {
                     isGrabbed = true;
+                    isPinching = true;
                     const l = gridGroup.worldToLocal(desktopPointer.position.clone());
                     const nx = Math.round(l.x/BLOCK_SIZE+COLS/2-activeBlock.matrix[0].length/2);
                     const ny = Math.round(l.y/BLOCK_SIZE+activeBlock.matrix.length/2-1);
@@ -415,10 +425,12 @@
                 } else {
                     if (isGrabbed && !grabbingController) {
                         isGrabbed = false;
+                        isPinching = false;
                     }
                 }
             } else {
                 desktopPointer.visible = false;
+                if (!grabbingController) isPinching = false;
             }
 
             renderer.render(scene, camera);
