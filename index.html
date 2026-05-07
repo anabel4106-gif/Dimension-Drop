@@ -159,8 +159,16 @@
             }));
         }
         function collides(x, y, m) {
-            for(let dy=0; dy<m.length; dy++) for(let dx=0; dx<m[0].length; dx++)
-                if(m[dy][dx]) { const nx=x+dx, ny=y-dy; if(nx<0 || nx>=COLS || ny<0 || ny<0 || (ny>=0 && ny<ROWS && grid[ny][nx])) return true; }
+            for(let dy=0; dy<m.length; dy++) {
+                for(let dx=0; dx<m[0].length; dx++) {
+                    if(m[dy][dx]) {
+                        const nx = x + dx;
+                        const ny = y - dy;
+                        if (nx < 0 || nx >= COLS || ny < 0) return true;
+                        if (ny < ROWS && grid[ny][nx]) return true;
+                    }
+                }
+            }
             return false;
         }
         function lock() {
