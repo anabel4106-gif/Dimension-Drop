@@ -265,19 +265,49 @@
                 frameLastFallTime = currentTime;
             }
             hands.forEach(h => {
-                const i=h.joints?h.joints['index-finger-tip']:null, th=h.joints?h.joints['thumb-tip']:null;
-                const p = i && th && i.position.distanceTo(th.position) < 0.02;
-                if(p && !isPinching) {
-                    r.ray.origin.copy(i.position); r.ray.direction.set(0,0,-1).applyQuaternion(i.quaternion);
-                    if(r.intersectObjects(activeGroup.children).length>0) { isGrabbed=true; isPinching=true; grabbingController=h; }
-                } else if(!p && isPinching && grabbingController===h) { isGrabbed=false; isPinching=false; grabbingController=null; }
+                const joints = h.joints;
+                if (!joints || !joints['index-finger-tip'] || !joints['thumb-tip']) return;
+                
+                const indexTip = joints['index-finger-tip'];
+                const thumbTip = joints['thumb-tip'];
+                const distance = indexTip.position.distanceTo(thumbTip.position);
+                const pinching = distance < 0.03;
+
+                if (pinching && !isPinching) {
+                    const pinchPoint = new THREE.Vector3().addVectors(indexTip.position, thumbTip.position).multiplyScalar(0.5);
+                    r.set(pinchPoint, new THREE.Vector3(0, 0, -1)); // Ray forward from pinch
+                    
+                    // Alternative: check proximity
+                    let near = false;
+                    activeGroup.children.forEach(child => {
+                        const worldPos = new THREE.Vector3();
+                        child.getWorldPosition(worldPos);
+                        if (worldPos.distanceTo(pinchPoint) < 0.1) near = true;
+                    });
+
+                    if (near) {
+                        isGrabbed = true;
+                        isPinching = true;
+                        grabbingController = h;
+                    }
+                } else if (!pinching && isPinching && grabbingController === h) {
+                    isGrabbed = false;
+                    isPinching = false;
+                    grabbingController = null;
+                }
             });
-            if(isGrabbed && grabbingController && activeBlock) {
+            if (isGrabbed && grabbingController && activeBlock) {
                 const target = new THREE.Vector3();
-                if(grabbingController.joints) target.copy(grabbingController.joints['index-finger-tip'].position);
-                else {
-                    r.ray.origin.setFromMatrixPosition(grabbingController.matrixWorld); const tm=new THREE.Matrix4(); tm.identity().extractRotation(grabbingController.matrixWorld); r.ray.direction.set(0,0,-1).applyMatrix4(tm);
-                    if(!r.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,0,1), 0.5), target)) return;
+                if (grabbingController.joints && grabbingController.joints['index-finger-tip']) {
+                    const i = grabbingController.joints['index-finger-tip'];
+                    const t = grabbingController.joints['thumb-tip'];
+                    target.addVectors(i.position, t.position).multiplyScalar(0.5);
+                } else {
+                    r.ray.origin.setFromMatrixPosition(grabbingController.matrixWorld); 
+                    const tm = new THREE.Matrix4(); 
+                    tm.identity().extractRotation(grabbingController.matrixWorld); 
+                    r.ray.direction.set(0, 0, -1).applyMatrix4(tm);
+                    if (!r.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0.5), target)) return;
                 }
                 const l = gridGroup.worldToLocal(target), nx=Math.round(l.x/BLOCK_SIZE+COLS/2-activeBlock.matrix[0].length/2), ny=Math.round(l.y/BLOCK_SIZE+activeBlock.matrix.length/2-1);
                 if(!collides(nx,ny,activeBlock.matrix)) { activeBlock.x=nx; activeBlock.y=ny; updateActive(); }
