@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dimension Drop - Standalone XR Tetris</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0a0a0a; color: white; border: none; }
+        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 10; }
+        .ui-overlay { position: relative; width: 100%; height: 100vh; overflow: hidden; z-index: 20; pointer-events: none; }
+        .pointer-auto { pointer-events: auto; }
+    </style>
+</head>
+<body>
+    <div id="ui-root" class="ui-overlay">
+        <!-- Start Overlay -->
+        <div id="start-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-black/95 z-[60] p-12 overflow-hidden pointer-auto">
+            <div class="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none">
+                <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-cyan-500 rounded-full blur-[160px]"></div>
+                <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500 rounded-full blur-[160px]"></div>
+            </div>
+            <div class="relative flex flex-col items-center">
+                <div class="mb-4 text-center">
+                    <span class="text-[10px] tracking-[0.5em] text-cyan-400 font-bold uppercase opacity-80 mb-2 block">Spatial Puzzle Experience</span>
+                </div>
+                <h1 class="text-[15vw] md:text-[10vw] font-black tracking-tighter uppercase italic leading-[0.8] mb-8 text-white skew-x-[-6deg] text-center">
+                    Dimension<br><span class="text-cyan-500">Drop</span>
+                </h1>
+                <p class="max-w-md text-center text-sm md:text-base text-white/50 mb-12 font-light tracking-wide leading-relaxed">
+                    Step into a high-dimensional reality where geometry meets gravity. Manipulate time and space to organize the falling fragments.
+                </p>
+                <button id="start-button" class="group relative px-16 py-6 bg-white text-black font-black uppercase tracking-[0.2em] text-xs hover:bg-cyan-400 transition-all duration-500 hover:scale-110 active:scale-95 shadow-[0_0_50px_rgba(255,255,255,0.1)]">
+                    Initialize Session
+                </button>
+            </div>
+            <div class="absolute bottom-12 flex flex-col items-center opacity-30">
+                <div class="h-px w-24 bg-white/50 mb-4"></div>
+                <span class="text-[9px] uppercase tracking-[0.4em]">XR • Desktop • Hand Tracking</span>
+            </div>
+        </div>
+
+        <!-- Score Panel -->
+        <div id="score-panel" class="absolute top-8 left-8 p-6 bg-black/50 backdrop-blur-md rounded-2xl border border-white/10 shadow-2xl hidden">
+            <h1 class="text-2xl font-black tracking-tighter uppercase italic mb-4 text-cyan-400">Dimension Drop</h1>
+            <div class="space-y-1">
+                <div class="flex justify-between items-center gap-8">
+                    <span class="text-[10px] uppercase tracking-widest opacity-50 font-mono">Score</span>
+                    <span id="score-val" class="text-xl font-mono font-bold">0</span>
+                </div>
+                <div class="flex justify-between items-center gap-8">
+                    <span class="text-[10px] uppercase tracking-widest opacity-50 font-mono">Level</span>
+                    <span id="level-val" class="text-xl font-mono font-bold">1</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Over Overlay -->
+        <div id="game-over-overlay" class="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-xl z-50 hidden">
+            <div class="text-center animate-pulse">
+                <h2 class="text-6xl font-black tracking-tighter uppercase italic text-red-500 mb-2">Game Over</h2>
+                <p class="text-xs uppercase tracking-[0.5em] opacity-50">Resetting Dimension...</p>
+            </div>
+        </div>
+
+        <div id="instructions" class="absolute bottom-8 left-1/2 -translate-x-1/2 text-center hidden opacity-30">
+            <p class="text-[9px] uppercase tracking-[0.3em]">
+                Desktop: Mouse Move | R Rotate
+            </p>
+            <p class="text-[9px] uppercase tracking-[0.3em] mt-1">
+                VR: Trigger Grab | Hand Pinch
+            </p>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { VRButton } from 'three/addons/webxr/VRButton.js';
+        import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+        import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+
+        // --- Constants ---
+        const COLS = 8, ROWS = 12, BLOCK_SIZE = 0.1, SPAWN_Y = ROWS - 1, SPAWN_X = Math.floor(COLS / 2) - 1;
+        const SHAPES = {
+            I: [[1, 1, 1, 1]], O: [[1, 1], [1, 1]], T: [[0, 1, 0], [1, 1, 1]],
+            L: [[1, 0], [1, 0], [1, 1]], J: [[0, 1], [0, 1], [1, 1]],
+            S: [[0, 1, 1], [1, 1, 0]], Z: [[1, 1, 0], [0, 1, 1]]
+        };
+        const COLORS = { I: 0x00ffff, O: 0xffff00, T: 0x800080, L: 0xffa500, J: 0x0000ff, S: 0x00ff00, Z: 0xff0000 };
+
+        // --- State ---
+        let score = 0, level = 1, gameOver = false, gameStarted = false, lastFallTime = 0;
+        let grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+        let activeBlock = null, nextBlockType = getRandomShape(), isGrabbed = false, isPinching = false, grabbingController = null;
+
+        const scorePanel = document.getElementById('score-panel'), scoreVal = document.getElementById('score-val');
+        const levelVal = document.getElementById('level-val'), startOverlay = document.getElementById('start-overlay');
+        const gameOverOverlay = document.getElementById('game-over-overlay'), instructions = document.getElementById('instructions');
+
+        // --- Audio ---
+        let ac;
+        function playPing() {
+            if(!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+            if(ac.state === 'suspended') ac.resume();
+            const o = ac.createOscillator(), g = ac.createGain();
+            o.connect(g); g.connect(ac.destination); o.type = 'sine'; o.frequency.setValueAtTime(880, ac.currentTime);
+            g.gain.setValueAtTime(0.1, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.5);
+            o.start(); o.stop(ac.currentTime + 0.5);
+        }
+
+        // --- Three.js ---
+        const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0a0a0a);
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20); camera.position.set(0, 1.2, 0.8);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight); renderer.xr.enabled = true;
+        document.body.appendChild(renderer.domElement); 
+        
+        const vrButton = VRButton.createButton(renderer);
+        document.body.appendChild(vrButton);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const l1 = new THREE.DirectionalLight(0xffffff, 0.8); l1.position.set(1, 2, 1); scene.add(l1);
+
+        const gridGroup = new THREE.Group(); gridGroup.position.set(0, 0.8, -0.5); scene.add(gridGroup);
+        const activeGroup = new THREE.Group(); gridGroup.add(activeGroup);
+        const lockedMesh = new THREE.Group(); gridGroup.add(lockedMesh);
+        const nextGroup = new THREE.Group(); nextGroup.position.set(0.6, 1.2, -0.4); scene.add(nextGroup);
+        const blockGeo = new THREE.BoxGeometry(BLOCK_SIZE * 0.95, BLOCK_SIZE * 0.95, BLOCK_SIZE * 0.95);
+
+        // --- Core ---
+        function getRandomShape() { return Object.keys(SHAPES)[Math.floor(Math.random() * 7)]; }
+        function spawn() {
+            if(!gameStarted) return;
+            const t = nextBlockType; nextBlockType = getRandomShape(); updateNext();
+            activeBlock = { type: t, matrix: SHAPES[t], x: SPAWN_X, y: SPAWN_Y, color: COLORS[t] };
+            if(collides(activeBlock.x, activeBlock.y, activeBlock.matrix)) end(); else updateActive();
+        }
+        function updateActive() {
+            activeGroup.clear(); if(!activeBlock) return;
+            const mat = new THREE.MeshStandardMaterial({ color: activeBlock.color, emissive: activeBlock.color, emissiveIntensity: 0.8 });
+            activeBlock.matrix.forEach((r, dy) => r.forEach((v, dx) => {
+                if(v) { const m = new THREE.Mesh(blockGeo, mat); m.position.set((activeBlock.x+dx-COLS/2+0.5)*BLOCK_SIZE, (activeBlock.y-dy+0.5)*BLOCK_SIZE, 0); activeGroup.add(m); }
+            }));
+        }
+        function updateNext() {
+            nextGroup.clear(); const m = SHAPES[nextBlockType], mat = new THREE.MeshStandardMaterial({ color: COLORS[nextBlockType], emissive: COLORS[nextBlockType], emissiveIntensity: 0.5 });
+            m.forEach((r, dy) => r.forEach((v, dx) => {
+                if(v) { const m1 = new THREE.Mesh(blockGeo, mat); m1.scale.set(0.5, 0.5, 0.5); m1.position.set((dx-m[0].length/2)*BLOCK_SIZE*0.5, (-dy+m.length/2)*BLOCK_SIZE*0.5, 0); nextGroup.add(m1); }
+            }));
+        }
+        function collides(x, y, m) {
+            for(let dy=0; dy<m.length; dy++) for(let dx=0; dx<m[0].length; dx++)
+                if(m[dy][dx]) { const nx=x+dx, ny=y-dy; if(nx<0 || nx>=COLS || ny<0 || ny<0 || (ny>=0 && ny<ROWS && grid[ny][nx])) return true; }
+            return false;
+        }
+        function lock() {
+            if(!activeBlock) return;
+            activeBlock.matrix.forEach((r, dy) => r.forEach((v, dx) => { if(v) { const nx=activeBlock.x+dx, ny=activeBlock.y-dy; if(ny>=0 && ny<ROWS) grid[ny][nx] = activeBlock.type; } }));
+            let c=0; for(let y=0; y<ROWS; y++) if(grid[y].every(v=>v!==null)) { grid.splice(y, 1); grid.push(Array(COLS).fill(null)); c++; y--; }
+            if(c>0) { playPing(); score+=[100,300,500,800][c-1]*level; scoreVal.innerText=score.toLocaleString(); if(score>=level*500) { level++; levelVal.innerText=level; } }
+            spawn(); updateLocked();
+        }
+        function updateLocked() {
+            lockedMesh.clear();
+            grid.forEach((r, y) => r.forEach((v, x) => {
+                if(v) { const mat=new THREE.MeshStandardMaterial({color:COLORS[v],emissive:COLORS[v],emissiveIntensity:0.4}); const m=new THREE.Mesh(blockGeo,mat); m.position.set((x-COLS/2+0.5)*BLOCK_SIZE, (y+0.5)*BLOCK_SIZE, 0); lockedMesh.add(m); }
+            }));
+        }
+        function end() {
+            gameOver = true; gameOverOverlay.classList.remove('hidden');
+            setTimeout(() => {
+                grid = Array.from({length:ROWS},()=>Array(COLS).fill(null)); score=0; level=1; scoreVal.innerText='0'; levelVal.innerText='1';
+                gameOver=false; gameOverOverlay.classList.add('hidden'); updateLocked(); spawn();
+            }, 2000);
+        }
+
+        // --- Interaction ---
+        const r = new THREE.Raycaster(), m = new THREE.Vector2();
+        window.addEventListener('mousedown', (e) => { if(!gameStarted) return; m.x=(e.clientX/window.innerWidth)*2-1; m.y=-(e.clientY/window.innerHeight)*2+1; r.setFromCamera(m,camera); if(r.intersectObjects(activeGroup.children).length>0) isGrabbed=true; });
+        window.addEventListener('mousemove', (e) => {
+            if(!isGrabbed||!activeBlock) return; m.x=(e.clientX/window.innerWidth)*2-1; m.y=-(e.clientY/window.innerHeight)*2+1; r.setFromCamera(m,camera);
+            const p = new THREE.Plane(new THREE.Vector3(0,0,1), 0.5), t = new THREE.Vector3();
+            if(r.ray.intersectPlane(p, t)) {
+                const l = gridGroup.worldToLocal(t), nx=Math.round(l.x/BLOCK_SIZE+COLS/2-activeBlock.matrix[0].length/2), ny=Math.round(l.y/BLOCK_SIZE+activeBlock.matrix.length/2-1);
+                if(!collides(nx,ny,activeBlock.matrix)) { activeBlock.x=nx; activeBlock.y=ny; updateActive(); }
+            }
+        });
+        window.addEventListener('mouseup', () => isGrabbed=false);
+        window.addEventListener('keydown', (e) => { if(activeBlock && (e.key==='r'||e.key==='R')) { const m=activeBlock.matrix, nm=m[0].map((_,i)=>m.map(r=>r[i]).reverse()); if(!collides(activeBlock.x,activeBlock.y,nm)) { activeBlock.matrix=nm; updateActive(); } } });
+
+        // --- XR ---
+        const ctrls = [renderer.xr.getController(0), renderer.xr.getController(1)];
+        ctrls.forEach(c => {
+            c.addEventListener('selectstart', () => { r.ray.origin.setFromMatrixPosition(c.matrixWorld); const tm=new THREE.Matrix4(); tm.identity().extractRotation(c.matrixWorld); r.ray.direction.set(0,0,-1).applyMatrix4(tm); if(r.intersectObjects(activeGroup.children).length>0) { isGrabbed=true; grabbingController=c; } });
+            c.addEventListener('selectend', () => { isGrabbed=false; grabbingController=null; });
+            scene.add(c);
+        });
+        const hands = [renderer.xr.getHand(0), renderer.xr.getHand(1)];
+        const hf = new XRHandModelFactory(); hands.forEach(h => { h.add(hf.createHandModel(h, 'mesh')); scene.add(h); });
+
+        document.getElementById('start-button').addEventListener('click', () => {
+            gameStarted=true; startOverlay.classList.add('hidden'); scorePanel.classList.remove('hidden'); instructions.classList.remove('hidden'); spawn(); playPing();
+        });
+
+        // --- Animation Loop ---
+        let frameLastFallTime = performance.now();
+        renderer.setAnimationLoop((t) => {
+            if(!gameStarted) { renderer.render(scene, camera); return; }
+            const currentTime = performance.now();
+            const fallDelay = Math.max(100, 500/(level*0.5+0.5));
+
+            if(!isGrabbed && activeBlock && !gameOver) {
+                if(currentTime - frameLastFallTime > fallDelay) {
+                    if(!collides(activeBlock.x, activeBlock.y-1, activeBlock.matrix)) { 
+                        activeBlock.y--; 
+                        updateActive(); 
+                    } else {
+                        lock();
+                    }
+                    frameLastFallTime = currentTime;
+                }
+            } else {
+                frameLastFallTime = currentTime;
+            }
+            hands.forEach(h => {
+                const i=h.joints?h.joints['index-finger-tip']:null, th=h.joints?h.joints['thumb-tip']:null;
+                const p = i && th && i.position.distanceTo(th.position) < 0.02;
+                if(p && !isPinching) {
+                    r.ray.origin.copy(i.position); r.ray.direction.set(0,0,-1).applyQuaternion(i.quaternion);
+                    if(r.intersectObjects(activeGroup.children).length>0) { isGrabbed=true; isPinching=true; grabbingController=h; }
+                } else if(!p && isPinching && grabbingController===h) { isGrabbed=false; isPinching=false; grabbingController=null; }
+            });
+            if(isGrabbed && grabbingController && activeBlock) {
+                const target = new THREE.Vector3();
+                if(grabbingController.joints) target.copy(grabbingController.joints['index-finger-tip'].position);
+                else {
+                    r.ray.origin.setFromMatrixPosition(grabbingController.matrixWorld); const tm=new THREE.Matrix4(); tm.identity().extractRotation(grabbingController.matrixWorld); r.ray.direction.set(0,0,-1).applyMatrix4(tm);
+                    if(!r.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,0,1), 0.5), target)) return;
+                }
+                const l = gridGroup.worldToLocal(target), nx=Math.round(l.x/BLOCK_SIZE+COLS/2-activeBlock.matrix[0].length/2), ny=Math.round(l.y/BLOCK_SIZE+activeBlock.matrix.length/2-1);
+                if(!collides(nx,ny,activeBlock.matrix)) { activeBlock.x=nx; activeBlock.y=ny; updateActive(); }
+            }
+            gridGroup.position.y = 0.8 + Math.sin(t*0.001)*0.01; nextGroup.rotation.y+=0.01; renderer.render(scene, camera);
+        });
+        window.addEventListener('resize', () => { camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+    </script>
+</body>
+</html>
