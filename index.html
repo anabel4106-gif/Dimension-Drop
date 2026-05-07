@@ -387,18 +387,19 @@
                 const distance = Math.sqrt(dx*dx + dy*dy); // 2D distance for pinch is often more reliable
                 const pinching = distance < 0.08;
 
-                // Better mapping
+                // Better mapping & Ergonomics
                 const nx_normalized = 1 - index.x; 
                 const ny_normalized = 1 - index.y;
 
-                // Target position in world space
-                const targetX = (nx_normalized - 0.5) * 1.5;
-                const targetY = 0.8 + (ny_normalized - 0.5) * 1.5;
+                // Target position in world space - Increased sensitivity (2.2) and adjusted Y center (0.6)
+                // This makes it so users don't have to reach as high/far to move blocks.
+                const targetX = (nx_normalized - 0.5) * 2.2;
+                const targetY = 0.6 + (ny_normalized - 0.5) * 2.5;
                 const targetZ = -0.5;
 
-                // Update Visual Pointer
+                // Update Visual Pointer with faster lerp (0.3) for snappier response
                 desktopPointer.visible = true;
-                desktopPointer.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.2);
+                desktopPointer.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.3);
                 desktopPointer.material.color.set(pinching ? 0x00ff00 : 0xff00ff);
 
                 if (pinching) {
