@@ -189,7 +189,7 @@
                         const nx = x + dx;
                         const ny = y - dy;
                         if (nx < 0 || nx >= COLS || ny < 0) return true;
-                        if (ny < ROWS && grid[ny][nx]) return true;
+                        if (ny < ROWS && grid[ny] && grid[ny][nx]) return true;
                     }
                 }
             }
