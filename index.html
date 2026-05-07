@@ -136,6 +136,30 @@
         const lockedMesh = new THREE.Group(); gridGroup.add(lockedMesh);
         const nextGroup = new THREE.Group(); nextGroup.position.set(0.6, 1.2, -0.4); scene.add(nextGroup);
         const blockGeo = new THREE.BoxGeometry(BLOCK_SIZE * 0.95, BLOCK_SIZE * 0.95, BLOCK_SIZE * 0.95);
+        const gridMaterial = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6 });
+
+        // Draw Grid
+        for (let i = 0; i <= COLS; i++) {
+            const geometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3((i - COLS / 2) * BLOCK_SIZE, 0, 0),
+                new THREE.Vector3((i - COLS / 2) * BLOCK_SIZE, ROWS * BLOCK_SIZE, 0)
+            ]);
+            gridGroup.add(new THREE.Line(geometry, gridMaterial));
+        }
+        for (let i = 0; i <= ROWS; i++) {
+            const geometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3((-COLS / 2) * BLOCK_SIZE, i * BLOCK_SIZE, 0),
+                new THREE.Vector3((COLS / 2) * BLOCK_SIZE, i * BLOCK_SIZE, 0)
+            ]);
+            gridGroup.add(new THREE.Line(geometry, gridMaterial));
+        }
+
+        // Bounding Box
+        const boxGeo = new THREE.BoxGeometry(COLS * BLOCK_SIZE, ROWS * BLOCK_SIZE, BLOCK_SIZE);
+        const boxEdges = new THREE.EdgesGeometry(boxGeo);
+        const boxLine = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8 }));
+        boxLine.position.y = (ROWS * BLOCK_SIZE) / 2;
+        gridGroup.add(boxLine);
 
         // --- Core ---
         function getRandomShape() { return Object.keys(SHAPES)[Math.floor(Math.random() * 7)]; }
